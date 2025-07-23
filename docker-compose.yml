@@ -5,7 +5,7 @@ services:
       context: .
       args:
         GITHUB_TOKEN: ${GITHUB_TOKEN}
-    container_name: spotin
+    container_name: app
     restart: unless-stopped
     working_dir: /var/www
     volumes:
@@ -22,7 +22,7 @@ services:
       context: .
       args:
         GITHUB_TOKEN: ${GITHUB_TOKEN}
-    container_name: spotin-queue
+    container_name: app-queue
     restart: unless-stopped
     working_dir: /var/www
     command: php artisan queue:work
@@ -56,7 +56,7 @@ services:
       context: .
       args:
         GITHUB_TOKEN: ${GITHUB_TOKEN}
-    container_name: spotin-scheduler
+    container_name: app-scheduler
     restart: unless-stopped
     working_dir: /var/www
     command: php artisan schedule:work
