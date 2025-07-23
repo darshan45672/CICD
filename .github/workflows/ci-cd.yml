@@ -127,7 +127,7 @@ jobs:
         context: .
         file: ./Dockerfile
         push: true
-        tags: ${{ secrets.AZURE_ACR_REGISTRY }}/spotin:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
+        tags: ${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
         build-args: |
           GITHUB_TOKEN=${{ secrets.COMPOSER_GITHUB_TOKEN }}
 
