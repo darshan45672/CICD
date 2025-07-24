@@ -148,12 +148,12 @@ jobs:
             -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
             $(if [ -f sonar-project.properties.override ]; then cat sonar-project.properties.override; fi)
 
-  build_and_push_docker:
-    name: Build and Push Docker Image
+  build_docker_image:
+    name: Build Docker Image
     runs-on: ubuntu-latest
     needs: sonarqube
     if: github.event_name == 'push'
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -233,12 +233,6 @@ jobs:
           VITE_REVERB_HOST=${{ vars.REVERB_HOST }}
           VITE_REVERB_PORT=${{ vars.REVERB_PORT }}
           VITE_REVERB_SCHEME=${{ vars.REVERB_SCHEME }}
-
-          COMPOSER_GITHUB_TOKEN=${{ secrets.COMPOSER_GITHUB_TOKEN }}
-          SONAR_PROJECT_KEY=${{ vars.SONAR_PROJECT_KEY }}
-          SONAR_ORGANIZATION=${{ vars.SONAR_ORGANIZATION }}
-          SONAR_HOST_URL=${{ secrets.SONAR_HOST_URL }}
-          SONAR_TOKEN=${{ secrets.SONAR_TOKEN }}
           EOF
 
       - name: Set up Docker Buildx
@@ -247,6 +241,45 @@ jobs:
           driver: docker-container
           driver-opts: network=host
 
+      - name: Build Docker Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: ${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
+          build-args: |
+            GITHUB_TOKEN=${{ secrets.COMPOSER_GITHUB_TOKEN }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save Docker Image
+        run: |
+          docker save -o docker-image.tar ${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
+
+      - name: Upload Docker Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image
+          path: docker-image.tar
+
+  push_docker_image:
+    name: Push Docker Image to ACR
+    runs-on: ubuntu-latest
+    needs: build_docker_image
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Download Docker Image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-image
+          path: .
+
+      - name: Load Docker Image
+        run: |
+          docker load -i docker-image.tar
+
       - name: Login to Azure Container Registry
         uses: docker/login-action@v3
         with:
@@ -254,14 +287,6 @@ jobs:
           username: ${{ secrets.AZURE_ACR_USERNAME }}
           password: ${{ secrets.AZURE_ACR_PASSWORD }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
-          build-args: |
-            GITHUB_TOKEN=${{ secrets.COMPOSER_GITHUB_TOKEN }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Push Docker Image
+        run: |
+          docker push ${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
