@@ -18,7 +18,7 @@ ENV COMPOSER_CURL_TIMEOUT=300
 ENV COMPOSER_DISABLE_NETWORK_TIMEOUT=1
 
 ARG GITHUB_TOKEN
-RUN if [ -n "$GITHUB_TOKEN" ]; then composer config --global github-oauth.github.com "$GITHUB_TOKEN"; fi \
+RUN if [ -n "$COMPOSER_GITHUB_TOKEN" ]; then composer config --global github-oauth.github.com "$COMPOSER_GITHUB_TOKEN"; fi \
  && composer config --global secure-http false
 
 WORKDIR /var/www
