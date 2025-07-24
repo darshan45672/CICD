@@ -111,33 +111,6 @@ jobs:
           path: coverage.xml
   
   sonarqube:
-    # name: SonarQube Analysis
-    # runs-on: ubuntu-latest
-    # needs: tests
-    # if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-
-    # steps:
-    #   - name: Checkout code
-    #     uses: actions/checkout@v4
-    #     with:
-    #       fetch-depth: 0
-
-    #   - name: Download Coverage Report
-    #     uses: actions/download-artifact@v4
-    #     with:
-    #       name: coverage-report
-    #       path: .
-
-    #   - name: SonarCloud Scan
-    #     uses: SonarSource/sonarcloud-github-action@master
-    #     env:
-    #       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    #       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-    #     with:
-    #       args: >
-    #         -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
-    #         -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
-    #         -Dsonar.php.coverage.reportPaths=coverage.xml
     name: SonarQube Analysis
     runs-on: ubuntu-latest
     needs: tests
