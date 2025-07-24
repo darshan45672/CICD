@@ -212,6 +212,6 @@ jobs:
           push: true
           tags: ${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
           build-args: |
-            GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+            GITHUB_TOKEN=${{ secrets.COMPOSER_GITHUB_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
