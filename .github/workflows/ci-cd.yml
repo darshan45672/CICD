@@ -226,6 +226,12 @@ jobs:
           VITE_REVERB_HOST=${{ vars.REVERB_HOST }}
           VITE_REVERB_PORT=${{ vars.REVERB_PORT }}
           VITE_REVERB_SCHEME=${{ vars.REVERB_SCHEME }}
+
+          COMPOSER_GITHUB_TOKEN=${{ secrets.COMPOSER_GITHUB_TOKEN }}
+          SONAR_PROJECT_KEY=${{ vars.SONAR_PROJECT_KEY }}
+          SONAR_ORGANIZATION=${{ vars.SONAR_ORGANIZATION }}
+          SONAR_HOST_URL=${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN=${{ secrets.SONAR_TOKEN }}
           EOF
 
       - name: Set up Docker Buildx
