@@ -151,7 +151,7 @@ jobs:
   build_and_push_docker:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: tests
+    needs: sonarqube
     if: github.event_name == 'push'
     
     steps:
