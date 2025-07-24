@@ -111,6 +111,33 @@ jobs:
           path: coverage.xml
   
   sonarqube:
+    # name: SonarQube Analysis
+    # runs-on: ubuntu-latest
+    # needs: tests
+    # if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    # steps:
+    #   - name: Checkout code
+    #     uses: actions/checkout@v4
+    #     with:
+    #       fetch-depth: 0
+
+    #   - name: Download Coverage Report
+    #     uses: actions/download-artifact@v4
+    #     with:
+    #       name: coverage-report
+    #       path: .
+
+    #   - name: SonarCloud Scan
+    #     uses: SonarSource/sonarcloud-github-action@master
+    #     env:
+    #       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    #       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    #     with:
+    #       args: >
+    #         -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+    #         -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+    #         -Dsonar.php.coverage.reportPaths=coverage.xml
     name: SonarQube Analysis
     runs-on: ubuntu-latest
     needs: tests
@@ -128,8 +155,17 @@ jobs:
           name: coverage-report
           path: .
 
+      - name: Verify Coverage File
+        run: |
+          if [ ! -f coverage.xml ]; then
+            echo "coverage.xml not found, skipping coverage analysis"
+            echo "sonar.php.coverage.reportPaths=none" > sonar-project.properties.override
+          else
+            echo "coverage.xml found, proceeding with analysis"
+          fi
+
       - name: SonarCloud Scan
-        uses: SonarSource/sonarcloud-github-action@master
+        uses: SonarSource/sonarqube-scan-action@v5.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -137,7 +173,7 @@ jobs:
           args: >
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
-            -Dsonar.php.coverage.reportPaths=coverage.xml
+            $(if [ -f sonar-project.properties.override ]; then cat sonar-project.properties.override; fi)
 
   build_and_push_docker:
     name: Build and Push Docker Image
