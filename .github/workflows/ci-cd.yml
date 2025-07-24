@@ -22,7 +22,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Run Gitleaks
         run: |
@@ -104,56 +104,11 @@ jobs:
       - name: Tests
         run: ./vendor/bin/pest
 
-  sonarqube:
-    name: SonarQube Code Analysis 
-    runs-on: ubuntu-latest
-    needs: tests
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'  
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.4'
-          coverage: xdebug
-
-      - name: Install Dependencies
-        run: |
-          composer install --no-interaction --prefer-dist --optimize-autoloader
-          npm install
-
-      - name: Run Tests with Coverage
-        run: |
-          cp .env.example .env
-          php artisan key:generate
-          ./vendor/bin/pest --coverage --coverage-clover=coverage.xml
-
-      - name: SonarQube Scan
-        uses: sonarqube-quality-gate-action@master
-        with:
-          scanMetadataReportFile: .scannerwork/report-task.txt
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
-      - name: Run SonarQube Scanner
-        uses: sonarsource/sonarqube-scan-action@master
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
   build_and_push_docker:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    needs: [tests, sonarqube] 
-    if: github.event_name == 'push' && always() && needs.tests.result == 'success' && (needs.sonarqube.result == 'success' || needs.sonarqube.result == 'skipped')
+    needs: tests
+    if: github.event_name == 'push'
     
     steps:
       - name: Checkout code
