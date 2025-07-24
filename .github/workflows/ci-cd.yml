@@ -103,6 +103,43 @@ jobs:
 
       - name: Tests
         run: ./vendor/bin/pest
+  
+  sonarqube:
+    name: SonarQube Analysis
+    runs-on: ubuntu-latest
+    needs: tests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Download Coverage Report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: .
+
+      - name: SonarQube Scan
+        run: |
+          dotnet tool install --global SonarScanner.MSBuild
+          export PATH="$PATH:/root/.dotnet/tools"
+          sonar-scanner \
+            -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }} \
+            -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }} \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.php.coverage.reportPaths=coverage.xml
+        env:
+          GITHUB_TOKEN: ${{ secrets.COMPOSER_GITHUB_TOKEN }}
 
   build_and_push_docker:
     name: Build and Push Docker Image
