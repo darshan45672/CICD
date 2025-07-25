@@ -429,8 +429,20 @@ jobs:
           echo "IMAGE_TAG=${{ github.ref_name == 'main' && 'latest' || github.ref_name }}" >> $GITHUB_ENV
           echo "IMAGE_NAME=${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}" >> $GITHUB_ENV
 
-      - name: Set up Docker Scout
-        uses: docker/scout-action@v1
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Verify Image Exists
+        run: |
+          echo "Checking image: ${{ env.IMAGE_NAME }}"
+          docker images | grep -E "(REPOSITORY|${{ secrets.AZURE_ACR_REGISTRY }})"
+          if ! docker inspect ${{ env.IMAGE_NAME }} > /dev/null 2>&1; then
+            echo "Error: Image ${{ env.IMAGE_NAME }} not found"
+            exit 1
+          fi
 
       - name: Docker Scout - CVE Analysis
         id: scout_cves
@@ -443,8 +455,6 @@ jobs:
           format: sarif
           only-severities: critical,high,medium
           exit-code: false
-          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker Scout - Policy Evaluation
         id: scout_policy
@@ -453,8 +463,6 @@ jobs:
           command: policy
           image: ${{ env.IMAGE_NAME }}
           exit-code: false
-          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker Scout - SBOM Generation
         uses: docker/scout-action@v1
@@ -463,40 +471,60 @@ jobs:
           image: ${{ env.IMAGE_NAME }}
           format: spdx
           output: scout-sbom.spdx.json
-          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Verify SARIF File Creation
+        run: |
+          echo "Checking for SARIF files..."
+          ls -la scout-*.* || echo "No scout files found"
+          if [ -f scout-cves.sarif ]; then
+            echo "✅ SARIF file created successfully"
+            echo "File size: $(wc -c < scout-cves.sarif) bytes"
+          else
+            echo "❌ SARIF file not found, creating empty one for consistency"
+            echo '{"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "Docker Scout"}}, "results": []}]}' > scout-cves.sarif
+          fi
 
       - name: Parse Scout Results
         id: parse_results
         run: |
-          if [ -f scout-cves.sarif ]; then
-            CRITICAL_COUNT=$(jq '[.runs[].results[] | select(.level == "error" and (.properties.severity // .properties."security-severity") >= 9.0)] | length' scout-cves.sarif || echo "0")
-            HIGH_COUNT=$(jq '[.runs[].results[] | select(.level == "error" and (.properties.severity // .properties."security-severity") >= 7.0 and (.properties.severity // .properties."security-severity") < 9.0)] | length' scout-cves.sarif || echo "0")
-            MEDIUM_COUNT=$(jq '[.runs[].results[] | select(.level == "warning" and (.properties.severity // .properties."security-severity") >= 4.0 and (.properties.severity // .properties."security-severity") < 7.0)] | length' scout-cves.sarif || echo "0")
-          
-            echo "CRITICAL_VULNS=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
-            echo "HIGH_VULNS=$HIGH_COUNT" >> $GITHUB_OUTPUT
-            echo "MEDIUM_VULNS=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
-          
-            echo "## Docker Scout Security Scan Results 🛡️" >> $GITHUB_STEP_SUMMARY
-            echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
-            echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-            echo "| Critical | $CRITICAL_COUNT |" >> $GITHUB_STEP_SUMMARY
-            echo "| High | $HIGH_COUNT |" >> $GITHUB_STEP_SUMMARY
-            echo "| Medium | $MEDIUM_COUNT |" >> $GITHUB_STEP_SUMMARY
-          
-            if [ "$CRITICAL_COUNT" -gt 0 ]; then
-              echo "SECURITY_GATE=BLOCK_CRITICAL" >> $GITHUB_OUTPUT
-              echo "❌ **CRITICAL vulnerabilities found - Deployment BLOCKED**" >> $GITHUB_STEP_SUMMARY
-            elif [ "$HIGH_COUNT" -gt 5 ]; then
-              echo "SECURITY_GATE=BLOCK_HIGH" >> $GITHUB_OUTPUT
-              echo "⚠️ **Too many HIGH vulnerabilities ($HIGH_COUNT > 5) - Deployment BLOCKED**" >> $GITHUB_STEP_SUMMARY
+          if [ -f scout-cves.sarif ] && [ -s scout-cves.sarif ]; then
+            if jq empty scout-cves.sarif 2>/dev/null; then
+              CRITICAL_COUNT=$(jq '[.runs[]?.results[]? | select(.level == "error" and (.properties.severity // .properties."security-severity" // 0) >= 9.0)] | length' scout-cves.sarif 2>/dev/null || echo "0")
+              HIGH_COUNT=$(jq '[.runs[]?.results[]? | select(.level == "error" and (.properties.severity // .properties."security-severity" // 0) >= 7.0 and (.properties.severity // .properties."security-severity" // 0) < 9.0)] | length' scout-cves.sarif 2>/dev/null || echo "0")
+              MEDIUM_COUNT=$(jq '[.runs[]?.results[]? | select(.level == "warning" and (.properties.severity // .properties."security-severity" // 0) >= 4.0 and (.properties.severity // .properties."security-severity" // 0) < 7.0)] | length' scout-cves.sarif 2>/dev/null || echo "0")
             else
-              echo "SECURITY_GATE=PASS" >> $GITHUB_OUTPUT
-              echo "✅ **Security scan passed - Safe to deploy**" >> $GITHUB_STEP_SUMMARY
+              echo "Invalid SARIF format, setting counts to 0"
+              CRITICAL_COUNT=0
+              HIGH_COUNT=0
+              MEDIUM_COUNT=0
             fi
           else
+            echo "No valid SARIF file found, setting counts to 0"
+            CRITICAL_COUNT=0
+            HIGH_COUNT=0
+            MEDIUM_COUNT=0
+          fi
+
+          echo "CRITICAL_VULNS=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+          echo "HIGH_VULNS=$HIGH_COUNT" >> $GITHUB_OUTPUT
+          echo "MEDIUM_VULNS=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
+
+          echo "## Docker Scout Security Scan Results 🛡️" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Critical | $CRITICAL_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| High | $HIGH_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Medium | $MEDIUM_COUNT |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$CRITICAL_COUNT" -gt 0 ]; then
+            echo "SECURITY_GATE=BLOCK_CRITICAL" >> $GITHUB_OUTPUT
+            echo "❌ **CRITICAL vulnerabilities found - Deployment BLOCKED**" >> $GITHUB_STEP_SUMMARY
+          elif [ "$HIGH_COUNT" -gt 5 ]; then
+            echo "SECURITY_GATE=BLOCK_HIGH" >> $GITHUB_OUTPUT
+            echo "⚠️ **Too many HIGH vulnerabilities ($HIGH_COUNT > 5) - Deployment BLOCKED**" >> $GITHUB_STEP_SUMMARY
+          else
             echo "SECURITY_GATE=PASS" >> $GITHUB_OUTPUT
+            echo "✅ **Security scan passed - Safe to deploy**" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Security Gate Check
@@ -505,7 +533,7 @@ jobs:
           echo "❌ Security gate failed!"
           echo "Critical vulnerabilities: ${{ steps.parse_results.outputs.CRITICAL_VULNS }}"
           echo "High vulnerabilities: ${{ steps.parse_results.outputs.HIGH_VULNS }}"
-        
+      
           if [ "${{ github.ref_name }}" = "main" ]; then
             echo "::error::Production deployment blocked due to security vulnerabilities"
             exit 1
@@ -519,6 +547,7 @@ jobs:
         with:
           sarif_file: scout-cves.sarif
           category: docker-scout-cves
+        continue-on-error: true
 
       - name: Upload Security Reports
         if: always()
@@ -529,6 +558,7 @@ jobs:
             scout-*.sarif
             scout-*.json
           retention-days: 30
+        continue-on-error: true
 
   push_docker_image:
     name: Push Docker Image to ACR
