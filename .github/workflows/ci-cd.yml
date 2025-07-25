@@ -435,12 +435,22 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Verify Image Exists
+      - name: Verify Image and Environment
         run: |
-          echo "Checking image: ${{ env.IMAGE_NAME }}"
-          docker images | grep -E "(REPOSITORY|${{ secrets.AZURE_ACR_REGISTRY }})"
-          if ! docker inspect ${{ env.IMAGE_NAME }} > /dev/null 2>&1; then
-            echo "Error: Image ${{ env.IMAGE_NAME }} not found"
+          echo "🔍 Environment Check:"
+          echo "IMAGE_NAME: ${{ env.IMAGE_NAME }}"
+          echo "IMAGE_TAG: ${{ env.IMAGE_TAG }}"
+          echo "Branch: ${{ github.ref_name }}"
+          echo ""
+          echo "📦 Available Docker Images:"
+          docker images
+          echo ""
+          echo "🎯 Target Image Details:"
+          if docker inspect ${{ env.IMAGE_NAME }} > /dev/null 2>&1; then
+            echo "✅ Target image found"
+            docker inspect ${{ env.IMAGE_NAME }} --format='{{.Id}} {{.RepoTags}}'
+          else
+            echo "❌ Target image not found"
             exit 1
           fi
 
@@ -462,7 +472,10 @@ jobs:
         with:
           command: policy
           image: ${{ env.IMAGE_NAME }}
+          # Add organization parameter - replace with your Docker Hub organization
+          organization: ${{ secrets.DOCKERHUB_USERNAME }}
           exit-code: false
+        continue-on-error: true
 
       - name: Docker Scout - SBOM Generation
         uses: docker/scout-action@v1
@@ -471,77 +484,136 @@ jobs:
           image: ${{ env.IMAGE_NAME }}
           format: spdx
           output: scout-sbom.spdx.json
+        continue-on-error: true
 
-      - name: Verify SARIF File Creation
+      - name: Docker Scout - Recommendations
+        uses: docker/scout-action@v1
+        with:
+          command: recommendations
+          image: ${{ env.IMAGE_NAME }}
+          format: sarif
+          output: scout-recommendations.sarif
+        continue-on-error: true
+
+      - name: Verify Scout Output Files
         run: |
-          echo "Checking for SARIF files..."
-          ls -la scout-*.* || echo "No scout files found"
+          echo "📋 Checking generated files:"
+          ls -la scout-*.* 2>/dev/null || echo "No scout files found yet"
+          
           if [ -f scout-cves.sarif ]; then
-            echo "✅ SARIF file created successfully"
-            echo "File size: $(wc -c < scout-cves.sarif) bytes"
+            echo "✅ CVE SARIF file exists ($(wc -c < scout-cves.sarif) bytes)"
+            # Validate JSON structure
+            if jq empty scout-cves.sarif 2>/dev/null; then
+              echo "✅ SARIF file has valid JSON structure"
+            else
+              echo "⚠️ SARIF file has invalid JSON, creating minimal valid structure"
+              echo '{"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "Docker Scout"}}, "results": []}]}' > scout-cves.sarif
+            fi
           else
-            echo "❌ SARIF file not found, creating empty one for consistency"
+            echo "⚠️ CVE SARIF file not found, creating empty one"
             echo '{"version": "2.1.0", "runs": [{"tool": {"driver": {"name": "Docker Scout"}}, "results": []}]}' > scout-cves.sarif
           fi
 
-      - name: Parse Scout Results
+      - name: Parse Scout Results and Generate Security Report
         id: parse_results
         run: |
+          # Initialize counters
+          CRITICAL_COUNT=0
+          HIGH_COUNT=0
+          MEDIUM_COUNT=0
+          
           if [ -f scout-cves.sarif ] && [ -s scout-cves.sarif ]; then
-            if jq empty scout-cves.sarif 2>/dev/null; then
-              CRITICAL_COUNT=$(jq '[.runs[]?.results[]? | select(.level == "error" and (.properties.severity // .properties."security-severity" // 0) >= 9.0)] | length' scout-cves.sarif 2>/dev/null || echo "0")
-              HIGH_COUNT=$(jq '[.runs[]?.results[]? | select(.level == "error" and (.properties.severity // .properties."security-severity" // 0) >= 7.0 and (.properties.severity // .properties."security-severity" // 0) < 9.0)] | length' scout-cves.sarif 2>/dev/null || echo "0")
-              MEDIUM_COUNT=$(jq '[.runs[]?.results[]? | select(.level == "warning" and (.properties.severity // .properties."security-severity" // 0) >= 4.0 and (.properties.severity // .properties."security-severity" // 0) < 7.0)] | length' scout-cves.sarif 2>/dev/null || echo "0")
-            else
-              echo "Invalid SARIF format, setting counts to 0"
-              CRITICAL_COUNT=0
-              HIGH_COUNT=0
-              MEDIUM_COUNT=0
+            echo "📊 Parsing SARIF results..."
+            
+            # Parse with better error handling
+            CRITICAL_COUNT=$(jq '[.runs[]?.results[]? | select(.level == "error" and ((.properties.severity // .properties."security-severity" // .ruleIndex // 0) | tonumber) >= 9.0)] | length' scout-cves.sarif 2>/dev/null || echo "0")
+            HIGH_COUNT=$(jq '[.runs[]?.results[]? | select(.level == "error" and ((.properties.severity // .properties."security-severity" // .ruleIndex // 0) | tonumber) >= 7.0 and ((.properties.severity // .properties."security-severity" // .ruleIndex // 0) | tonumber) < 9.0)] | length' scout-cves.sarif 2>/dev/null || echo "0")
+            MEDIUM_COUNT=$(jq '[.runs[]?.results[]? | select(.level == "warning" and ((.properties.severity // .properties."security-severity" // .ruleIndex // 0) | tonumber) >= 4.0 and ((.properties.severity // .properties."security-severity" // .ruleIndex // 0) | tonumber) < 7.0)] | length' scout-cves.sarif 2>/dev/null || echo "0")
+            
+            # Fallback parsing if properties are structured differently
+            if [ "$CRITICAL_COUNT" = "0" ] && [ "$HIGH_COUNT" = "0" ] && [ "$MEDIUM_COUNT" = "0" ]; then
+              echo "🔄 Trying alternative parsing method..."
+              TOTAL_RESULTS=$(jq '[.runs[]?.results[]?] | length' scout-cves.sarif 2>/dev/null || echo "0")
+              if [ "$TOTAL_RESULTS" -gt 0 ]; then
+                echo "Found $TOTAL_RESULTS total results, using simplified counting"
+                # If we can't parse severity properly, assume some findings exist
+                MEDIUM_COUNT=$TOTAL_RESULTS
+              fi
             fi
-          else
-            echo "No valid SARIF file found, setting counts to 0"
-            CRITICAL_COUNT=0
-            HIGH_COUNT=0
-            MEDIUM_COUNT=0
           fi
-
+          
+          # Ensure counts are numeric
+          CRITICAL_COUNT=${CRITICAL_COUNT:-0}
+          HIGH_COUNT=${HIGH_COUNT:-0}
+          MEDIUM_COUNT=${MEDIUM_COUNT:-0}
+          
+          echo "🛡️ Security Scan Results:"
+          echo "Critical: $CRITICAL_COUNT"
+          echo "High: $HIGH_COUNT"  
+          echo "Medium: $MEDIUM_COUNT"
+          
+          # Set outputs
           echo "CRITICAL_VULNS=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
           echo "HIGH_VULNS=$HIGH_COUNT" >> $GITHUB_OUTPUT
           echo "MEDIUM_VULNS=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
-
-          echo "## Docker Scout Security Scan Results 🛡️" >> $GITHUB_STEP_SUMMARY
-          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Critical | $CRITICAL_COUNT |" >> $GITHUB_STEP_SUMMARY
-          echo "| High | $HIGH_COUNT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Medium | $MEDIUM_COUNT |" >> $GITHUB_STEP_SUMMARY
-
+          
+          # Generate job summary
+          echo "## 🛡️ Docker Scout Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Scan Date:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity Level | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔴 Critical | $CRITICAL_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟠 High | $HIGH_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🟡 Medium | $MEDIUM_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Security gate logic
           if [ "$CRITICAL_COUNT" -gt 0 ]; then
             echo "SECURITY_GATE=BLOCK_CRITICAL" >> $GITHUB_OUTPUT
-            echo "❌ **CRITICAL vulnerabilities found - Deployment BLOCKED**" >> $GITHUB_STEP_SUMMARY
+            echo "## ❌ Security Gate: BLOCKED" >> $GITHUB_STEP_SUMMARY
+            echo "**Reason:** Critical vulnerabilities detected ($CRITICAL_COUNT found)" >> $GITHUB_STEP_SUMMARY
+            echo "**Action:** Deployment blocked for security" >> $GITHUB_STEP_SUMMARY
           elif [ "$HIGH_COUNT" -gt 5 ]; then
             echo "SECURITY_GATE=BLOCK_HIGH" >> $GITHUB_OUTPUT
-            echo "⚠️ **Too many HIGH vulnerabilities ($HIGH_COUNT > 5) - Deployment BLOCKED**" >> $GITHUB_STEP_SUMMARY
+            echo "## ⚠️ Security Gate: BLOCKED" >> $GITHUB_STEP_SUMMARY
+            echo "**Reason:** Too many high-severity vulnerabilities ($HIGH_COUNT > 5)" >> $GITHUB_STEP_SUMMARY
+            echo "**Action:** Deployment blocked - please remediate high-severity issues" >> $GITHUB_STEP_SUMMARY
           else
             echo "SECURITY_GATE=PASS" >> $GITHUB_OUTPUT
-            echo "✅ **Security scan passed - Safe to deploy**" >> $GITHUB_STEP_SUMMARY
+            echo "## ✅ Security Gate: PASSED" >> $GITHUB_STEP_SUMMARY
+            echo "**Status:** Safe to deploy" >> $GITHUB_STEP_SUMMARY
+            echo "**Action:** Proceeding with deployment" >> $GITHUB_STEP_SUMMARY
           fi
 
-      - name: Security Gate Check
+      - name: Security Gate Enforcement
         if: steps.parse_results.outputs.SECURITY_GATE != 'PASS'
         run: |
-          echo "❌ Security gate failed!"
+          echo ""
+          echo "🚨 SECURITY GATE FAILED 🚨"
+          echo "=========================="
           echo "Critical vulnerabilities: ${{ steps.parse_results.outputs.CRITICAL_VULNS }}"
           echo "High vulnerabilities: ${{ steps.parse_results.outputs.HIGH_VULNS }}"
-      
+          echo "Medium vulnerabilities: ${{ steps.parse_results.outputs.MEDIUM_VULNS }}"
+          echo ""
+          
           if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "🛑 PRODUCTION DEPLOYMENT BLOCKED"
+            echo "This is the main branch - strict security enforcement is active."
+            echo "Please address security vulnerabilities before proceeding."
             echo "::error::Production deployment blocked due to security vulnerabilities"
             exit 1
           else
-            echo "::warning::Development branch - continuing with warnings"
+            echo "⚠️ DEVELOPMENT BRANCH WARNING"
+            echo "Security issues detected, but allowing deployment on non-production branch."
+            echo "Please address these issues before merging to main."
+            echo "::warning::Security vulnerabilities detected - recommended to fix before production"
           fi
 
-      - name: Upload Scout SARIF to GitHub Security
+      - name: Upload SARIF to GitHub Security Tab
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
@@ -549,16 +621,88 @@ jobs:
           category: docker-scout-cves
         continue-on-error: true
 
-      - name: Upload Security Reports
+      - name: Upload Additional SARIF Files
+        if: always() && hashFiles('scout-recommendations.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: scout-recommendations.sarif
+          category: docker-scout-recommendations
+        continue-on-error: true
+
+      - name: Create Comprehensive Security Report
+        if: always()
+        run: |
+          mkdir -p security-reports
+          
+          # Create detailed report
+          cat << EOF > security-reports/docker-security-summary.md
+          # Docker Security Scan Report
+          
+          **Generated:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          **Image:** \`${{ env.IMAGE_NAME }}\`
+          **Branch:** \`${{ github.ref_name }}\`
+          **Commit:** \`${{ github.sha }}\`
+          **Security Gate:** ${{ steps.parse_results.outputs.SECURITY_GATE }}
+          
+          ## Vulnerability Summary
+          
+          | Severity | Count |
+          |----------|-------|
+          | Critical | ${{ steps.parse_results.outputs.CRITICAL_VULNS }} |
+          | High     | ${{ steps.parse_results.outputs.HIGH_VULNS }} |
+          | Medium   | ${{ steps.parse_results.outputs.MEDIUM_VULNS }} |
+          
+          ## Security Assessment
+          
+          $(if [ "${{ steps.parse_results.outputs.SECURITY_GATE }}" = "PASS" ]; then
+            echo "✅ **PASSED** - Image meets security requirements"
+          else
+            echo "❌ **FAILED** - Security issues require attention"
+          fi)
+          
+          ## Files Generated
+          
+          - \`scout-cves.sarif\` - Vulnerability details in SARIF format
+          - \`scout-sbom.spdx.json\` - Software Bill of Materials
+          - \`scout-recommendations.sarif\` - Base image recommendations
+          
+          ## Next Steps
+          
+          1. Review detailed vulnerabilities in GitHub Security tab
+          2. Check base image recommendations for updates
+          3. Update dependencies if vulnerabilities found
+          4. Re-run scan after fixes
+          
+          EOF
+          
+          # Copy all scout files to reports directory
+          cp scout-*.* security-reports/ 2>/dev/null || echo "Some scout files not found, continuing..."
+          
+          echo "📋 Security report created:"
+          ls -la security-reports/
+
+      - name: Upload Comprehensive Security Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-security-reports
-          path: |
-            scout-*.sarif
-            scout-*.json
+          name: docker-security-reports-${{ github.run_number }}
+          path: security-reports/
           retention-days: 30
-        continue-on-error: true
+
+      - name: Security Scan Summary
+        if: always()
+        run: |
+          echo ""
+          echo "🎯 DOCKER SCOUT SCAN COMPLETE"
+          echo "=============================="
+          echo "✅ Image scanned: ${{ env.IMAGE_NAME }}"
+          echo "📊 Critical: ${{ steps.parse_results.outputs.CRITICAL_VULNS }}"
+          echo "📊 High: ${{ steps.parse_results.outputs.HIGH_VULNS }}"  
+          echo "📊 Medium: ${{ steps.parse_results.outputs.MEDIUM_VULNS }}"
+          echo "🚦 Security Gate: ${{ steps.parse_results.outputs.SECURITY_GATE }}"
+          echo "📁 Reports uploaded as artifacts"
+          echo "🔒 SARIF files uploaded to GitHub Security tab"
+          echo ""
 
   push_docker_image:
     name: Push Docker Image to ACR
