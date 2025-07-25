@@ -303,6 +303,19 @@ jobs:
           
           echo "SONAR_EXTERNAL_REPORTS=$REPORT_FILES" >> $GITHUB_ENV
 
+      - name: Download Security Reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-report*"
+          path: ./security-reports/
+          merge-multiple: true
+
+      - name: Download CodeQL SARIF files
+        uses: actions/download-artifact@v4
+        with:
+          name: codeql-results-javascript
+          path: ./codeql-results/
+
       - name: Verify Coverage File
         run: |
           if [ ! -f coverage.xml ]; then
@@ -323,6 +336,8 @@ jobs:
             -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
             -Dsonar.sarifReportPaths=./codeql-results/
             -Dsonar.externalIssuesReportPaths=${{ env.SONAR_EXTERNAL_REPORTS }}
+            -Dsonar.sarifReportPaths=./codeql-results/
+            -Dsonar.externalIssuesReportPaths=./security-reports/
             $(if [ -f sonar-project.properties.override ]; then cat sonar-project.properties.override; fi)
 
   build_docker_image:
