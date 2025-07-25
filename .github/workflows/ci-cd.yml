@@ -407,12 +407,16 @@ jobs:
           path: docker-image.tar
 
   docker_scout_scan:
-    name: Docker Scout Scan
+    name: Docker Scout Security Scan
     runs-on: ubuntu-latest
     needs: build_docker_image
     if: github.event_name == 'push'
+    timeout-minutes: 15
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Download Docker Image
         uses: actions/download-artifact@v4
         with:
@@ -422,28 +426,109 @@ jobs:
       - name: Load Docker Image
         run: |
           docker load -i docker-image.tar
+          echo "IMAGE_TAG=${{ github.ref_name == 'main' && 'latest' || github.ref_name }}" >> $GITHUB_ENV
+          echo "IMAGE_NAME=${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}" >> $GITHUB_ENV
 
-      - name: Run Docker Scout Scan
+      - name: Set up Docker Scout
+        uses: docker/scout-action@v1
+
+      - name: Docker Scout - CVE Analysis
+        id: scout_cves
         uses: docker/scout-action@v1
         with:
           command: cves
-          image: ${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
-          only-severities: critical,high
-          exit-code: true
+          image: ${{ env.IMAGE_NAME }}
+          sarif-file: scout-cves.sarif
+          summary: true
+          format: sarif
+          only-severities: critical,high,medium
+          exit-code: false
           dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
-          summary: true
-          format: json
-          write-comment: true
 
-      - name: Upload Scout Report (Optional)
+      - name: Docker Scout - Policy Evaluation
+        id: scout_policy
+        uses: docker/scout-action@v1
+        with:
+          command: policy
+          image: ${{ env.IMAGE_NAME }}
+          exit-code: false
+          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Docker Scout - SBOM Generation
+        uses: docker/scout-action@v1
+        with:
+          command: sbom
+          image: ${{ env.IMAGE_NAME }}
+          format: spdx
+          output: scout-sbom.spdx.json
+          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Parse Scout Results
+        id: parse_results
+        run: |
+          if [ -f scout-cves.sarif ]; then
+            CRITICAL_COUNT=$(jq '[.runs[].results[] | select(.level == "error" and (.properties.severity // .properties."security-severity") >= 9.0)] | length' scout-cves.sarif || echo "0")
+            HIGH_COUNT=$(jq '[.runs[].results[] | select(.level == "error" and (.properties.severity // .properties."security-severity") >= 7.0 and (.properties.severity // .properties."security-severity") < 9.0)] | length' scout-cves.sarif || echo "0")
+            MEDIUM_COUNT=$(jq '[.runs[].results[] | select(.level == "warning" and (.properties.severity // .properties."security-severity") >= 4.0 and (.properties.severity // .properties."security-severity") < 7.0)] | length' scout-cves.sarif || echo "0")
+          
+            echo "CRITICAL_VULNS=$CRITICAL_COUNT" >> $GITHUB_OUTPUT
+            echo "HIGH_VULNS=$HIGH_COUNT" >> $GITHUB_OUTPUT
+            echo "MEDIUM_VULNS=$MEDIUM_COUNT" >> $GITHUB_OUTPUT
+          
+            echo "## Docker Scout Security Scan Results 🛡️" >> $GITHUB_STEP_SUMMARY
+            echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Critical | $CRITICAL_COUNT |" >> $GITHUB_STEP_SUMMARY
+            echo "| High | $HIGH_COUNT |" >> $GITHUB_STEP_SUMMARY
+            echo "| Medium | $MEDIUM_COUNT |" >> $GITHUB_STEP_SUMMARY
+          
+            if [ "$CRITICAL_COUNT" -gt 0 ]; then
+              echo "SECURITY_GATE=BLOCK_CRITICAL" >> $GITHUB_OUTPUT
+              echo "❌ **CRITICAL vulnerabilities found - Deployment BLOCKED**" >> $GITHUB_STEP_SUMMARY
+            elif [ "$HIGH_COUNT" -gt 5 ]; then
+              echo "SECURITY_GATE=BLOCK_HIGH" >> $GITHUB_OUTPUT
+              echo "⚠️ **Too many HIGH vulnerabilities ($HIGH_COUNT > 5) - Deployment BLOCKED**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "SECURITY_GATE=PASS" >> $GITHUB_OUTPUT
+              echo "✅ **Security scan passed - Safe to deploy**" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "SECURITY_GATE=PASS" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Security Gate Check
+        if: steps.parse_results.outputs.SECURITY_GATE != 'PASS'
+        run: |
+          echo "❌ Security gate failed!"
+          echo "Critical vulnerabilities: ${{ steps.parse_results.outputs.CRITICAL_VULNS }}"
+          echo "High vulnerabilities: ${{ steps.parse_results.outputs.HIGH_VULNS }}"
+        
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "::error::Production deployment blocked due to security vulnerabilities"
+            exit 1
+          else
+            echo "::warning::Development branch - continuing with warnings"
+          fi
+
+      - name: Upload Scout SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: scout-cves.sarif
+          category: docker-scout-cves
+
+      - name: Upload Security Reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: docker-scout-report
+          name: docker-security-reports
           path: |
-            scout-results.json
-            scout-report.json 
+            scout-*.sarif
+            scout-*.json
+          retention-days: 30
 
   push_docker_image:
     name: Push Docker Image to ACR

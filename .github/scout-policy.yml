@@ -1,0 +1,36 @@
+# Docker Scout Security Policy
+policies:
+  vulnerability:
+    critical:
+      action: block
+      max_count: 0
+      description: "Block all critical vulnerabilities"
+    
+    high:
+      action: warn
+      max_count: 5
+      description: "Allow maximum 5 high vulnerabilities"
+    
+    medium:
+      action: allow
+      max_count: 20
+      description: "Allow up to 20 medium vulnerabilities"
+    
+    low:
+      action: allow
+      max_count: -1
+      description: "Allow all low vulnerabilities"
+
+  base_image:
+    freshness_days: 30
+    prefer_official: true
+    
+  licenses:
+    blocked:
+      - GPL-3.0
+      - AGPL-3.0
+    allowed:
+      - MIT
+      - Apache-2.0
+      - BSD-3-Clause
+      - ISC
