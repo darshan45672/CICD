@@ -1,6 +1,7 @@
 FROM php:8.3-fpm-alpine3.22
 
 RUN apk add --no-cache \
+    git \
     curl \
     libpng-dev \
     libxml2-dev \
@@ -8,12 +9,7 @@ RUN apk add --no-cache \
     icu-dev \
     oniguruma-dev \
     npm \
- && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd intl zip \
- && curl -L https://github.com/git/git/archive/refs/tags/v2.50.1.tar.gz | tar -xz -C /tmp \
- && cd /tmp/git-2.50.1 \
- && make prefix=/usr/local all install \
- && git --version \
- && rm -rf /tmp/git-2.50.1
+ && docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd intl zip
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
