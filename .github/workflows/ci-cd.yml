@@ -1,4 +1,4 @@
-name: CI/CD Pipeline
+name: CI/CD Pipeline with Comprehensive Security
 
 on:
   push:
@@ -9,9 +9,13 @@ on:
     branches:
       - main
       - dev
+  schedule:
+    - cron: '0 2 * * 0'
 
 permissions:
   contents: write
+  security-events: write
+  actions: read
 
 jobs:
   gitleaks:
@@ -37,10 +41,142 @@ jobs:
           name: gitleaks-report
           path: gitleaks-report.json
 
+  php_security:
+    name: PHP Security Analysis
+    runs-on: ubuntu-latest
+    needs: gitleaks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2, psalm, phpstan
+
+      - name: Install Dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Run PHPStan (Static Analysis)
+        run: |
+          if [ ! -f phpstan.neon ]; then
+            echo "parameters:
+              level: 6
+              paths:
+                - app
+                - config
+                - database
+                - routes
+              excludePaths:
+                - vendor
+                - storage
+                - bootstrap/cache" > phpstan.neon
+          fi
+          vendor/bin/phpstan analyse --error-format=json --no-progress > phpstan-report.json || true
+
+      - name: Upload PHPStan Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phpstan-report
+          path: phpstan-report.json
+
+  codeql_javascript:
+    name: CodeQL JavaScript Analysis
+    runs-on: ubuntu-latest
+    needs: gitleaks
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+          config-file: ./.github/codeql/codeql-config.yml
+          queries: ${{ github.ref_name == 'main' && 'security-extended' || 'security-and-quality' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build JavaScript assets
+        run: npm run build
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript"
+          upload: true
+          output: codeql-results-javascript.sarif
+
+      - name: Upload CodeQL SARIF file
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-results-javascript
+          path: codeql-results-javascript.sarif
+
+  dependency_check:
+    name: Dependency Vulnerability Check
+    runs-on: ubuntu-latest
+    needs: gitleaks
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: |
+          composer install --no-interaction --prefer-dist --optimize-autoloader
+          npm ci
+
+      - name: PHP Security Check (Composer Audit)
+        run: |
+          composer audit --format=json > composer-audit.json || true
+
+      - name: Node.js Security Check (npm audit)
+        run: |
+          npm audit --audit-level=moderate --json > npm-audit.json || true
+
+      - name: Upload Dependency Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-reports
+          path: |
+            composer-audit.json
+            npm-audit.json
+
   linting:
     name: Code Quality & Linting
     runs-on: ubuntu-latest
-    needs: gitleaks
+    needs: [php_security, codeql_javascript, dependency_check]
 
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +264,45 @@ jobs:
           name: coverage-report
           path: .
 
+      - name: Download Security Reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-report*"
+          path: ./security-reports/
+          merge-multiple: false  # Keep artifacts separate
+
+      - name: Download CodeQL SARIF files
+        uses: actions/download-artifact@v4
+        with:
+          name: codeql-results-javascript
+          path: ./codeql-results/
+
+      - name: Prepare Security Reports
+        run: |
+          # Create a consolidated directory for security reports
+          mkdir -p ./consolidated-reports
+          
+          # Find all JSON files in security-reports subdirectories and copy them
+          find ./security-reports -name "*.json" -type f -exec cp {} ./consolidated-reports/ \;
+          
+          # List what we have
+          echo "Available security report files:"
+          ls -la ./consolidated-reports/
+          
+          # Create comma-separated list of report files
+          REPORT_FILES=""
+          for file in ./consolidated-reports/*.json; do
+            if [ -f "$file" ]; then
+              if [ -z "$REPORT_FILES" ]; then
+                REPORT_FILES="$file"
+              else
+                REPORT_FILES="$REPORT_FILES,$file"
+              fi
+            fi
+          done
+          
+          echo "SONAR_EXTERNAL_REPORTS=$REPORT_FILES" >> $GITHUB_ENV
+
       - name: Verify Coverage File
         run: |
           if [ ! -f coverage.xml ]; then
@@ -146,6 +321,8 @@ jobs:
           args: >
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+            -Dsonar.sarifReportPaths=./codeql-results/
+            -Dsonar.externalIssuesReportPaths=${{ env.SONAR_EXTERNAL_REPORTS }}
             $(if [ -f sonar-project.properties.override ]; then cat sonar-project.properties.override; fi)
 
   build_docker_image:
