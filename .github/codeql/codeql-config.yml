@@ -1,17 +1,12 @@
 # .github/codeql/codeql-config.yml
-name: "CodeQL Security Configuration"
+name: "CodeQL JavaScript Security Configuration"
 
 # Use default queries plus additional security queries
 disable-default-queries: false
 
-# Include only application source code directories
+# Include only JavaScript/TypeScript source code directories
 paths:
-  - "app/"                    # Laravel application logic
-  - "config/"                 # Configuration files
-  - "database/"               # Migrations, seeders, factories
-  - "routes/"                 # Route definitions
   - "resources/js/"           # JavaScript/TypeScript source
-  - "resources/views/"        # Blade templates
   - "public/"                 # Public assets (custom files only)
 
 # Exclude third-party code and generated files
