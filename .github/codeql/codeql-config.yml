@@ -1,13 +1,10 @@
-# .github/codeql/codeql-config.yml
 name: "CodeQL JavaScript Security Configuration"
 
-# Use default queries plus additional security queries
 disable-default-queries: false
 
-# Include only JavaScript/TypeScript source code directories
 paths:
-  - "resources/js/"           # JavaScript/TypeScript source
-  - "public/"                 # Public assets (custom files only)
+  - "resources/js/"           
+  - "public/"                
 
 # Exclude third-party code and generated files
 paths-ignore:
