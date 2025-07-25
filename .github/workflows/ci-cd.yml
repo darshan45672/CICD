@@ -55,11 +55,6 @@ jobs:
       fail-fast: false
       matrix:
         language: [ 'php', 'javascript' ]
-        include:
-          - branch: main
-            query-suite: security-extended
-          - branch: dev
-            query-suite: security-and-quality
 
     steps:
       - name: Checkout repository
@@ -70,7 +65,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           config-file: ./.github/codeql/codeql-config.yml
-          queries: security-and-quality
+          queries: ${{ github.ref_name == 'main' && 'security-extended' || 'security-and-quality' }}
 
       - name: Setup PHP (for PHP analysis)
         if: matrix.language == 'php'
@@ -105,7 +100,6 @@ jobs:
           category: "/language:${{matrix.language}}"
           upload: true
           output: codeql-results-${{ matrix.language }}.sarif
-          queries: ${{ github.ref_name == 'main' && 'security-extended' || 'security-and-quality' }}
 
       - name: Upload CodeQL SARIF file
         if: always()
