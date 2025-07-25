@@ -1,8 +1,7 @@
 FROM php:8.4-fpm-alpine3.22
 
-RUN apk update && apk upgrade && \
-    apk add --no-cache \
-    git \
+RUN apk add --no-cache \
+    git>=2.50.1-r0 \
     curl \
     libpng-dev \
     libxml2-dev \
