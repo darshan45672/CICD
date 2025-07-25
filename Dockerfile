@@ -1,7 +1,7 @@
 FROM php:8.3-fpm-alpine3.22
 
-RUN apk add --no-cache \
-    git \
+RUN apk add --no-cache --repository=http://dl-cdn.alpinelinux.org/alpine/v3.22/main \
+    git@2.50.1-r0 \
     curl \
     libpng-dev \
     libxml2-dev \
