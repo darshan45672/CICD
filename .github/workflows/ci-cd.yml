@@ -9,9 +9,13 @@ on:
     branches:
       - main
       - dev
+  schedule:
+    - cron: '0 2 * * 0'
 
 permissions:
   contents: write
+  security-events: write
+  actions: read
 
 jobs:
   gitleaks:
@@ -37,10 +41,83 @@ jobs:
           name: gitleaks-report
           path: gitleaks-report.json
 
+  codeql:
+    name: CodeQL Security Analysis
+    runs-on: ubuntu-latest
+    needs: gitleaks
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'php', 'javascript' ]
+        include:
+          - branch: main
+            query-suite: security-extended
+          - branch: dev
+            query-suite: security-and-quality
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          config-file: ./.github/codeql/codeql-config.yml
+          queries: security-and-quality
+
+      - name: Setup PHP (for PHP analysis)
+        if: matrix.language == 'php'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          tools: composer:v2
+
+      - name: Install PHP dependencies (for PHP analysis)
+        if: matrix.language == 'php'
+        run: |
+          composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Setup Node.js (for JavaScript analysis)
+        if: matrix.language == 'javascript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install Node dependencies (for JavaScript analysis)
+        if: matrix.language == 'javascript'
+        run: |
+          npm ci
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{matrix.language}}"
+          upload: true
+          output: codeql-results-${{ matrix.language }}.sarif
+          queries: ${{ github.ref_name == 'main' && 'security-extended' || 'security-and-quality' }}
+
+      - name: Upload CodeQL SARIF file
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-results-${{ matrix.language }}
+          path: codeql-results-${{ matrix.language }}.sarif
+
   linting:
     name: Code Quality & Linting
     runs-on: ubuntu-latest
-    needs: gitleaks
+    needs: [gitleaks, codeql]
 
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +205,13 @@ jobs:
           name: coverage-report
           path: .
 
+      - name: Download CodeQL SARIF files (for integration)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: codeql-results-*
+          path: ./codeql-results/
+          merge-multiple: true
+
       - name: Verify Coverage File
         run: |
           if [ ! -f coverage.xml ]; then
@@ -146,6 +230,7 @@ jobs:
           args: >
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+            -Dsonar.sarifReportPaths=./codeql-results/
             $(if [ -f sonar-project.properties.override ]; then cat sonar-project.properties.override; fi)
 
   build_docker_image:
