@@ -441,7 +441,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: docker-scout-report
-          path: scout-results.json 
+          path: |
+            scout-results.json
+            scout-report.json 
 
   push_docker_image:
     name: Push Docker Image to ACR
