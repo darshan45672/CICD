@@ -1,0 +1,40 @@
+# .github/codeql/codeql-config.yml
+name: "CodeQL Security Configuration"
+
+# Use default queries plus additional security queries
+disable-default-queries: false
+
+# Include only application source code directories
+paths:
+  - "app/"                    # Laravel application logic
+  - "config/"                 # Configuration files
+  - "database/"               # Migrations, seeders, factories
+  - "routes/"                 # Route definitions
+  - "resources/js/"           # JavaScript/TypeScript source
+  - "resources/views/"        # Blade templates
+  - "public/"                 # Public assets (custom files only)
+
+# Exclude third-party code and generated files
+paths-ignore:
+  - "vendor/"                 # Composer dependencies
+  - "node_modules/"           # NPM dependencies
+  - "storage/"                # Laravel storage (logs, cache, sessions)
+  - "bootstrap/cache/"        # Laravel bootstrap cache
+  - "public/build/"           # Vite/Laravel Mix build output
+  - "public/hot"              # Vite hot reload file
+  - "public/storage"          # Storage symlink
+  - "tests/"                  # Test files (optional - remove this line to include tests)
+  - "*.min.js"                # Minified JavaScript files
+  - "*.min.css"               # Minified CSS files
+  - "*.bundle.js"             # Bundled JavaScript files
+  - "*.map"                   # Source map files
+  - "dist/"                   # Distribution/build directories
+  - ".env*"                   # Environment files
+  - "*.log"                   # Log files
+
+# Query configuration for comprehensive security analysis
+query-filters:
+  - exclude:
+      id: js/unused-local-variable
+  - exclude:
+      id: js/useless-assignment-to-local
