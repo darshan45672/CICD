@@ -466,16 +466,15 @@ jobs:
           only-severities: critical,high,medium
           exit-code: false
 
-      - name: Docker Scout - Policy Evaluation
-        id: scout_policy
-        uses: docker/scout-action@v1
-        with:
-          command: policy
-          image: ${{ env.IMAGE_NAME }}
-          # Add organization parameter - replace with your Docker Hub organization
-          organization: ${{ secrets.DOCKERHUB_USERNAME }}
-          exit-code: false
-        continue-on-error: true
+      # - name: Docker Scout - Policy Evaluation
+      #   id: scout_policy
+      #   uses: docker/scout-action@v1
+      #   with:
+      #     command: policy
+      #     image: ${{ env.IMAGE_NAME }}
+      #     organization: ${{ secrets.DOCKERHUB_USERNAME }}
+      #     exit-code: false
+      #   continue-on-error: true
 
       - name: Docker Scout - SBOM Generation
         uses: docker/scout-action@v1

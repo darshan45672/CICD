@@ -1,6 +1,7 @@
-FROM php:8.3-fpm-alpine3.22
+FROM php:8.4-fpm-alpine3.22
 
-RUN apk add --no-cache \
+RUN apk update && apk upgrade && \
+    apk add --no-cache \
     git \
     curl \
     libpng-dev \
