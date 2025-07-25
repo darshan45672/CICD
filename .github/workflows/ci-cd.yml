@@ -119,7 +119,7 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
-          category: "/language:javascript"
+          category: '/language:javascript'
           upload: true
           output: codeql-results-javascript.sarif
 
@@ -245,7 +245,7 @@ jobs:
         with:
           name: coverage-report
           path: coverage.xml
-  
+
   sonarqube:
     name: SonarQube Analysis
     runs-on: ubuntu-latest
@@ -309,45 +309,45 @@ jobs:
           APP_KEY=${{ secrets.APP_KEY }}
           APP_DEBUG=${{ vars.APP_DEBUG }}
           APP_URL=${{ vars.APP_URL }}
-          
+
           APP_LOCALE=${{ vars.APP_LOCALE }}
           APP_FALLBACK_LOCALE=${{ vars.APP_FALLBACK_LOCALE }}
           APP_FAKER_LOCALE=${{ vars.APP_FAKER_LOCALE }}
-          
+
           APP_MAINTENANCE_DRIVER=${{ vars.APP_MAINTENANCE_DRIVER }}
           PHP_CLI_SERVER_WORKERS=${{ vars.PHP_CLI_SERVER_WORKERS }}
           BCRYPT_ROUNDS=${{ vars.BCRYPT_ROUNDS }}
-          
+
           LOG_CHANNEL=${{ vars.LOG_CHANNEL }}
           LOG_STACK=${{ vars.LOG_STACK }}
           LOG_DEPRECATIONS_CHANNEL=${{ vars.LOG_DEPRECATIONS_CHANNEL }}
           LOG_LEVEL=${{ vars.LOG_LEVEL }}
-          
+
           DB_CONNECTION=${{ vars.DB_CONNECTION }}
           DB_HOST=${{ vars.DB_HOST }}
           DB_PORT=${{ vars.DB_PORT }}
           DB_DATABASE=${{ vars.DB_DATABASE }}
           DB_USERNAME=${{ vars.DB_USERNAME }}
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-          
+
           SESSION_DRIVER=${{ vars.SESSION_DRIVER }}
           SESSION_LIFETIME=${{ vars.SESSION_LIFETIME }}
           SESSION_ENCRYPT=${{ vars.SESSION_ENCRYPT }}
           SESSION_PATH=${{ vars.SESSION_PATH }}
           SESSION_DOMAIN=${{ vars.SESSION_DOMAIN }}
-          
+
           BROADCAST_CONNECTION=${{ vars.BROADCAST_CONNECTION }}
           FILESYSTEM_DISK=${{ vars.FILESYSTEM_DISK }}
           QUEUE_CONNECTION=${{ vars.QUEUE_CONNECTION }}
-          
+
           CACHE_STORE=${{ vars.CACHE_STORE }}
           MEMCACHED_HOST=${{ vars.MEMCACHED_HOST }}
-          
+
           REDIS_CLIENT=${{ vars.REDIS_CLIENT }}
           REDIS_HOST=${{ vars.REDIS_HOST }}
           REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD || 'null' }}
           REDIS_PORT=${{ vars.REDIS_PORT }}
-          
+
           MAIL_MAILER=${{ vars.MAIL_MAILER }}
           MAIL_SCHEME=${{ vars.MAIL_SCHEME }}
           MAIL_HOST=${{ vars.MAIL_HOST }}
@@ -356,22 +356,22 @@ jobs:
           MAIL_PASSWORD=${{ secrets.MAIL_PASSWORD || '' }}
           MAIL_FROM_ADDRESS=${{ vars.MAIL_FROM_ADDRESS }}
           MAIL_FROM_NAME=${{ vars.MAIL_FROM_NAME }}
-          
+
           AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID || '' }}
           AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY || '' }}
           AWS_DEFAULT_REGION=${{ vars.AWS_DEFAULT_REGION }}
           AWS_BUCKET=${{ vars.AWS_BUCKET }}
           AWS_USE_PATH_STYLE_ENDPOINT=${{ vars.AWS_USE_PATH_STYLE_ENDPOINT }}
-          
+
           VITE_APP_NAME=${{ vars.APP_NAME }}
-          
+
           REVERB_APP_ID=${{ vars.REVERB_APP_ID }}
           REVERB_APP_KEY=${{ secrets.REVERB_APP_KEY }}
           REVERB_APP_SECRET=${{ secrets.REVERB_APP_SECRET }}
           REVERB_HOST=${{ vars.REVERB_HOST }}
           REVERB_PORT=${{ vars.REVERB_PORT }}
           REVERB_SCHEME=${{ vars.REVERB_SCHEME }}
-          
+
           VITE_REVERB_APP_KEY=${{ secrets.REVERB_APP_KEY }}
           VITE_REVERB_HOST=${{ vars.REVERB_HOST }}
           VITE_REVERB_PORT=${{ vars.REVERB_PORT }}
@@ -413,32 +413,40 @@ jobs:
     if: github.event_name == 'push'
 
     steps:
-      - name: Download Docker Image
-        uses: actions/download-artifact@v4
-        with:
-          name: docker-image
-          path: .
+    - name: Download Docker Image
+      uses: actions/download-artifact@v4
+      with:
+        name: docker-image
+        path: .
 
-      - name: Load Docker Image
-        run: |
-          docker load -i docker-image.tar
+    - name: Load Docker Image
+      run: |
+        docker load -i docker-image.tar
 
-      - name: Run Docker Scout Scan
-        uses: docker/scout-action@v1
-        with:
-          command: cves
-          image: ${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
-          only-severities: critical,high
-          exit-code: true
-          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
-          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
+    - name: Setup Docker Scout
+      uses: docker/setup-scout-action@v1
+      with:
+        dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+        dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Upload Scout Report (Optional)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-scout-report
-          path: scout-report.json
+    - name: Run Docker Scout Scan
+      uses: docker/scout-action@v1
+      with:
+        command: cves
+        image: ${{ secrets.AZURE_ACR_REGISTRY }}/app:${{ github.ref_name == 'main' && 'latest' || github.ref_name }}
+        only-severities: critical,high
+        exit-code: true
+        summary: true
+        format: json
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        write-comment: true
+
+    - name: Upload Scout Report (Optional)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: docker-scout-report
+        path: scout-results.json
 
   push_docker_image:
     name: Push Docker Image to ACR
