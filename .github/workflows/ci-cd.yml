@@ -264,44 +264,11 @@ jobs:
           name: coverage-report
           path: .
 
-      - name: Download Security Reports
-        uses: actions/download-artifact@v4
-        with:
-          pattern: "*-report*"
-          path: ./security-reports/
-          merge-multiple: false  # Keep artifacts separate
-
       - name: Download CodeQL SARIF files
         uses: actions/download-artifact@v4
         with:
           name: codeql-results-javascript
           path: ./codeql-results/
-
-      - name: Prepare Security Reports
-        run: |
-          # Create a consolidated directory for security reports
-          mkdir -p ./consolidated-reports
-          
-          # Find all JSON files in security-reports subdirectories and copy them
-          find ./security-reports -name "*.json" -type f -exec cp {} ./consolidated-reports/ \;
-          
-          # List what we have
-          echo "Available security report files:"
-          ls -la ./consolidated-reports/
-          
-          # Create comma-separated list of report files
-          REPORT_FILES=""
-          for file in ./consolidated-reports/*.json; do
-            if [ -f "$file" ]; then
-              if [ -z "$REPORT_FILES" ]; then
-                REPORT_FILES="$file"
-              else
-                REPORT_FILES="$REPORT_FILES,$file"
-              fi
-            fi
-          done
-          
-          echo "SONAR_EXTERNAL_REPORTS=$REPORT_FILES" >> $GITHUB_ENV
 
       - name: Verify Coverage File
         run: |
@@ -322,7 +289,6 @@ jobs:
             -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
             -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
             -Dsonar.sarifReportPaths=./codeql-results/
-            -Dsonar.externalIssuesReportPaths=${{ env.SONAR_EXTERNAL_REPORTS }}
             $(if [ -f sonar-project.properties.override ]; then cat sonar-project.properties.override; fi)
 
   build_docker_image:
