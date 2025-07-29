@@ -24,6 +24,7 @@ policies:
     freshness_days: 30
     prefer_official: true
     
+    
   licenses:
     blocked:
       - GPL-3.0
